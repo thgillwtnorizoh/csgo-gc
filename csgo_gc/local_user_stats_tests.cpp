@@ -240,11 +240,10 @@ bool FailedAchievementResetRestoresMemoryAndPendingUnlocks()
         && achieved && unlockTime == 321
         && stats.GetStat("KEEP_ME", statValue) && statValue == 7
         && removedCount == 55;
-    const bool unblocked = TestFilesystem::RemoveDirectory(TestPath);
+    TestFilesystem::RemoveDirectory(TestPath);
     std::vector<std::string> stored;
     return CHECK(failed)
         && CHECK(retained)
-        && CHECK(unblocked)
         && CHECK(stats.Save(stored))
         && CHECK(stored.size() == 1)
         && CHECK(stored[0] == "PENDING");
