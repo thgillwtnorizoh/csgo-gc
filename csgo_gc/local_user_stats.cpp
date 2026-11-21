@@ -236,8 +236,10 @@ bool Store::GetAchievement(std::string_view name, bool &achieved, uint32_t &unlo
     return true;
 }
 
-bool Store::SetAchievement(std::string_view name, uint32_t unlockTime)
+bool Store::SetAchievement(std::string_view name, uint32_t unlockTime,
+                           bool *newlyUnlocked)
 {
+    if (newlyUnlocked) *newlyUnlocked = false;
     if (!m_loaded || !IsValidName(name))
     {
         return false;
@@ -247,6 +249,7 @@ bool Store::SetAchievement(std::string_view name, uint32_t unlockTime)
     if (m_achievements.emplace(ownedName, unlockTime).second)
     {
         m_pendingAchievements.emplace(std::move(ownedName));
+        if (newlyUnlocked) *newlyUnlocked = true;
     }
     return true;
 }
