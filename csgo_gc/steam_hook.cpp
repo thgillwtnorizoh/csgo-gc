@@ -15,6 +15,7 @@
 #include "gc_client.h"
 #include "gc_server.h"
 #include "local_user_stats.h"
+#include "achievement_log.h"
 #include "mm_probe.h"
 #include "gcmm_native.h"
 #include "panorama.h"
@@ -1058,7 +1059,14 @@ public:
                 && static_cast<uint64_t>(currentTime) <= std::numeric_limits<uint32>::max()
                 ? static_cast<uint32>(currentTime)
                 : 0;
-            return name && m_store.SetAchievement(name, unlockTime);
+            bool newlyUnlocked = false;
+            const bool result = name && m_store.SetAchievement(
+                name, unlockTime, &newlyUnlocked);
+            if (result && newlyUnlocked && GetConfig().m_achievementLogEnabled)
+            {
+                (void)AchievementLog::Get().Unlock(name, unlockTime);
+            }
+            return result;
         }
         return original(name);
     }
@@ -1096,6 +1104,11 @@ public:
                     QueueUserAchievementStoredCallback(name.c_str());
                 }
             }
+            if (GetConfig().m_achievementLogEnabled)
+            {
+                (void)AchievementLog::Get().StoreResult(
+                    success, storedAchievements.size());
+            }
             return true;
         }
         return original();
@@ -1113,6 +1126,13 @@ public:
                 return false;
             }
             QueueUserAchievementStoredCallback(name, currentProgress, maxProgress);
+            // Observe genuine game-provided progress. Never infer progress from
+            // stats or synthesize an extra Steam callback.
+            if (GetConfig().m_achievementLogEnabled)
+            {
+                (void)AchievementLog::Get().Progress(
+                    name, currentProgress, maxProgress);
+            }
             return true;
         }
         return original(name, currentProgress, maxProgress);
