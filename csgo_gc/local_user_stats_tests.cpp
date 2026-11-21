@@ -204,6 +204,47 @@ bool FailedSaveRetainsPendingAchievementCallbacks()
         && CHECK(storedAchievements[0] == "RETRY_ME");
 }
 
+bool FreshUnlockFlagPreservesStoreStatsSemantics()
+{
+    ResetStorage();
+    LocalUserStats::Store store{ TestPath };
+    bool wasNew = true;
+    if (!CHECK(store.Load() == LocalUserStats::LoadResult::NotFound)
+        || !CHECK(store.SetAchievement("A", 111, &wasNew))
+        || !CHECK(wasNew))
+        return false;
+
+    wasNew = true;
+    if (!CHECK(store.SetAchievement("A", 222, &wasNew))
+        || !CHECK(!wasNew)) // repeat SetAchievement still succeeds, not a new event
+        return false;
+
+    std::vector<std::string> stored;
+    if (!CHECK(store.Save(stored))
+        || !CHECK(stored.size() == 1 && stored[0] == "A"))
+        return false;
+
+    bool achieved = false;
+    uint32_t timestamp = 0;
+    if (!CHECK(store.GetAchievement("A", achieved, timestamp))
+        || !CHECK(achieved && timestamp == 111))
+        return false;
+
+    wasNew = true;
+    if (!CHECK(store.SetAchievement("A", 333, &wasNew))
+        || !CHECK(!wasNew)
+        || !CHECK(store.Save(stored))
+        || !CHECK(stored.empty()))
+        return false;
+
+    wasNew = true;
+    return CHECK(store.ClearAchievement("A"))
+        && CHECK(store.SetAchievement("A", 444, &wasNew))
+        && CHECK(wasNew)
+        && CHECK(store.Save(stored))
+        && CHECK(stored.size() == 1 && stored[0] == "A");
+}
+
 bool MalformedFilesAreRejectedWithoutPartialState()
 {
     ResetStorage();
@@ -237,6 +278,7 @@ int main()
         && EnforcesStatTypesAndValidNames()
         && ClearAndResetFollowSteamSemantics()
         && FailedSaveRetainsPendingAchievementCallbacks()
+        && FreshUnlockFlagPreservesStoreStatsSemantics()
         && MalformedFilesAreRejectedWithoutPartialState()
         && ProductionPathMatchesOtherLocalData();
     ResetStorage();
