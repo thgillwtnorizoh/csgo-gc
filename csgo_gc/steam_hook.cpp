@@ -974,8 +974,13 @@ public:
         : m_steamId{ GetUserSteamId(pipe, user) }
         , m_store{ LocalUserStats::LocalPath }
     {
-        std::lock_guard lock{ s_localStatsMutex };
-        s_localStatsProxy = this;
+        // A listen server can have both client and game-server Steam pipes.
+        // Only the local player's stats proxy is eligible for RCON reset.
+        if (pipe != s_serverSteamPipe && m_steamId)
+        {
+            std::lock_guard lock{ s_localStatsMutex };
+            s_localStatsProxy = this;
+        }
     }
 
     ~SteamUserStatsProxy()
