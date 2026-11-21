@@ -46,6 +46,11 @@ public:
     // default: it is a diagnostic aid, not runtime behavior.
     bool m_mmProbe{ false };
 
+    // RASC read-only integration: record source-confirmed Steam API unlock /
+    // progress calls in csgo_gc/achievement_log. Independent from gc_log.txt
+    // and achievements.txt, disabled unless explicitly opted in.
+    bool m_achievementLogEnabled{ false };
+
     // GC Matchmaking Protocol native-control profile. Requires an external
     // coordinator through the separately configured Source RCON listener.
     bool m_gcmmEnabled{ false };
