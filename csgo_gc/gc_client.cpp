@@ -376,6 +376,11 @@ uint32_t ClientGC::LocalPlayerMusicKitMVPsForRoundMVPEvent() const
     return cachedMVPs >= 0 ? static_cast<uint32_t>(cachedMVPs + 1) : 0;
 }
 
+void ClientGC::SetAchievementResetHandler(AchievementResetHandler handler)
+{
+    m_achievementResetHandler = std::move(handler);
+}
+
 std::string ClientGC::RunRconCommand(std::string command)
 {
     auto request = std::make_shared<RconCommand>(std::move(command));
@@ -544,6 +549,7 @@ const ClientGC::RconCommandDef *ClientGC::RconCommands(size_t &count)
         { "remove_item", "remove_item <itemid>", &ClientGC::RconRemoveItem },
         { "refresh_inventory", "refresh_inventory", &ClientGC::RconRefreshInventory },
         { "save_inventory", "save_inventory", &ClientGC::RconSaveInventory },
+        { "reset_achievements", "reset_achievements confirm", &ClientGC::RconResetAchievements },
         { "gcmm_status", "gcmm_status", &ClientGC::RconGCMMStatus },
         { "gcmm_reserve", "gcmm_reserve search_id=N reservationid=N match_id=N accounts=ids ip=a.b.c.d port=N serverid=N map=name game_type=N", &ClientGC::RconGCMMReserve },
         { "gcmm_commit", "gcmm_commit search_id=N reservationid=N match_id=N", &ClientGC::RconGCMMCommit },
@@ -1047,6 +1053,20 @@ std::string ClientGC::RconSaveInventory(const RconRequest &request)
     }
 
     return m_inventory.Save() ? "OK saved" : "ERR save failed";
+}
+
+std::string ClientGC::RconResetAchievements(const RconRequest &request)
+{
+    if (request.args.size() != 1 || request.args[0] != "confirm")
+    {
+        return Usage("reset_achievements confirm");
+    }
+
+    if (!m_achievementResetHandler)
+    {
+        return "ERR local achievement stats unavailable";
+    }
+    return m_achievementResetHandler();
 }
 
 std::string ClientGC::RconMatchmakingUpdate(const RconRequest &request)

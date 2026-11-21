@@ -15,6 +15,7 @@
 #include "gc_client.h"
 #include "gc_server.h"
 #include "local_user_stats.h"
+#include "achievement_log.h"
 #include "mm_probe.h"
 #include "gcmm_native.h"
 #include "panorama.h"
@@ -24,6 +25,7 @@
 #include <funchook.h>
 #include <ctime>
 #include <limits>
+#include <mutex>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -181,7 +183,11 @@ public:
 // client connect/disconnect notifications
 static GCWrapper<ClientGC, NetworkingClient> *s_clientGC;
 static GCWrapper<ServerGC, NetworkingServer> *s_serverGC;
+// Construct before RCON so its destructor runs after RCON has stopped and
+// joined workers; late worker commands must never see a destroyed mutex.
+static std::mutex s_localStatsMutex;
 static RconServer s_rconServer;
+static std::string ResetLocalAchievementsViaRcon();
 
 struct PendingMicroTransactionAuthorization
 {
@@ -654,6 +660,7 @@ public:
 
             s_clientGC = new GCWrapper<ClientGC, NetworkingClient>{
                 networkingMessages, pipe, user, steamId };
+            s_clientGC->m_gc.SetAchievementResetHandler(ResetLocalAchievementsViaRcon);
             s_rconServer.RegisterClient(&s_clientGC->m_gc);
         }
     }
@@ -968,6 +975,10 @@ public:
     }
 };
 
+class SteamUserStatsProxy;
+// RCON uses a GC worker while Steam User Stats is called by game-facing threads.
+// Protect active local store, its proxy lifetime, and pending Steam callbacks.
+static SteamUserStatsProxy *s_localStatsProxy{};
 static std::vector<UserStatsReceived_t> s_userStatsReceivedCallbacks;
 static std::vector<UserStatsStored_t> s_userStatsStoredCallbacks;
 static std::vector<UserAchievementStored_t> s_userAchievementStoredCallbacks;
@@ -1013,12 +1024,29 @@ public:
         : m_steamId{ GetUserSteamId(pipe, user) }
         , m_store{ LocalUserStats::LocalPath }
     {
+        // A listen server can have both client and game-server Steam pipes.
+        // Only the local player's stats proxy is eligible for RCON reset.
+        if (pipe != s_serverSteamPipe && m_steamId)
+        {
+            std::lock_guard lock{ s_localStatsMutex };
+            s_localStatsProxy = this;
+        }
+    }
+
+    ~SteamUserStatsProxy()
+    {
+        std::lock_guard lock{ s_localStatsMutex };
+        if (s_localStatsProxy == this)
+        {
+            s_localStatsProxy = nullptr;
+        }
     }
 
     bool RequestCurrentStats(auto original)
     {
         if (!AppId::IsOriginal())
         {
+            std::lock_guard lock{ s_localStatsMutex };
             Platform::Print("Handling RequestCurrentStats for custom appid\n");
             LocalUserStats::LoadResult result = m_store.IsLoaded()
                 ? LocalUserStats::LoadResult::Success
@@ -1042,6 +1070,7 @@ public:
     {
         if (!AppId::IsOriginal())
         {
+            std::lock_guard lock{ s_localStatsMutex };
             return name && value && m_store.GetStat(name, *value);
         }
         return original(name, value);
@@ -1051,6 +1080,7 @@ public:
     {
         if (!AppId::IsOriginal())
         {
+            std::lock_guard lock{ s_localStatsMutex };
             return name && value && m_store.GetStat(name, *value);
         }
         return original(name, value);
@@ -1060,6 +1090,7 @@ public:
     {
         if (!AppId::IsOriginal())
         {
+            std::lock_guard lock{ s_localStatsMutex };
             return name && m_store.SetStat(name, value);
         }
         return original(name, value);
@@ -1069,6 +1100,7 @@ public:
     {
         if (!AppId::IsOriginal())
         {
+            std::lock_guard lock{ s_localStatsMutex };
             return name && m_store.SetStat(name, value);
         }
         return original(name, value);
@@ -1078,6 +1110,7 @@ public:
     {
         if (!AppId::IsOriginal())
         {
+            std::lock_guard lock{ s_localStatsMutex };
             uint32 unlockTime{};
             return name && achieved
                 && m_store.GetAchievement(name, *achieved, unlockTime);
@@ -1090,6 +1123,7 @@ public:
     {
         if (!AppId::IsOriginal())
         {
+            std::lock_guard lock{ s_localStatsMutex };
             return name && achieved && unlockTime
                 && m_store.GetAchievement(name, *achieved, *unlockTime);
         }
@@ -1100,12 +1134,20 @@ public:
     {
         if (!AppId::IsOriginal())
         {
+            std::lock_guard lock{ s_localStatsMutex };
             std::time_t currentTime = std::time(nullptr);
             uint32 unlockTime = currentTime > 0
                 && static_cast<uint64_t>(currentTime) <= std::numeric_limits<uint32>::max()
                 ? static_cast<uint32>(currentTime)
                 : 0;
-            return name && m_store.SetAchievement(name, unlockTime);
+            bool newlyUnlocked = false;
+            const bool result = name && m_store.SetAchievement(
+                name, unlockTime, &newlyUnlocked);
+            if (result && newlyUnlocked && GetConfig().m_achievementLogEnabled)
+            {
+                (void)AchievementLog::Get().Unlock(name, unlockTime);
+            }
+            return result;
         }
         return original(name);
     }
@@ -1114,6 +1156,7 @@ public:
     {
         if (!AppId::IsOriginal())
         {
+            std::lock_guard lock{ s_localStatsMutex };
             return name && m_store.ClearAchievement(name);
         }
         return original(name);
@@ -1123,6 +1166,7 @@ public:
     {
         if (!AppId::IsOriginal())
         {
+            std::lock_guard lock{ s_localStatsMutex };
             if (!m_store.IsLoaded())
             {
                 return false;
@@ -1143,6 +1187,11 @@ public:
                     QueueUserAchievementStoredCallback(name.c_str());
                 }
             }
+            if (GetConfig().m_achievementLogEnabled)
+            {
+                (void)AchievementLog::Get().StoreResult(
+                    success, storedAchievements.size());
+            }
             return true;
         }
         return original();
@@ -1153,6 +1202,7 @@ public:
     {
         if (!AppId::IsOriginal())
         {
+            std::lock_guard lock{ s_localStatsMutex };
             bool achieved{};
             uint32 unlockTime{};
             if (!name || !m_store.GetAchievement(name, achieved, unlockTime))
@@ -1160,6 +1210,13 @@ public:
                 return false;
             }
             QueueUserAchievementStoredCallback(name, currentProgress, maxProgress);
+            // Observe genuine game-provided progress. Never infer progress from
+            // stats or synthesize an extra Steam callback.
+            if (GetConfig().m_achievementLogEnabled)
+            {
+                (void)AchievementLog::Get().Progress(
+                    name, currentProgress, maxProgress);
+            }
             return true;
         }
         return original(name, currentProgress, maxProgress);
@@ -1169,6 +1226,7 @@ public:
     {
         if (!AppId::IsOriginal())
         {
+            std::lock_guard lock{ s_localStatsMutex };
             if (!m_store.ResetAllStats(achievementsToo))
             {
                 return false;
@@ -1187,10 +1245,37 @@ public:
         return original(achievementsToo);
     }
 
+    // Called with s_localStatsMutex held by ResetLocalAchievementsViaRcon.
+    std::string ResetAchievementsForRcon()
+    {
+        if (!m_store.IsLoaded())
+        {
+            auto result = m_store.Load();
+            if (result != LocalUserStats::LoadResult::Success
+                && result != LocalUserStats::LoadResult::NotFound)
+            {
+                return "ERR local achievement data could not be loaded";
+            }
+        }
+
+        size_t removed{};
+        if (!m_store.ResetAchievements(removed))
+        {
+            QueueUserStatsStoredCallback(k_EResultFail);
+            return "ERR reset_achievements save failed";
+        }
+
+        QueueUserStatsStoredCallback(k_EResultOK);
+        Platform::Print("RCON: reset %zu local achievements; stats preserved\n", removed);
+        return "OK reset_achievements removed=" + std::to_string(removed)
+            + " stats=preserved";
+    }
+
     SteamAPICall_t RequestUserStats(auto original, CSteamID steamIDUser)
     {
         if (!AppId::IsOriginal())
         {
+            std::lock_guard lock{ s_localStatsMutex };
             // not used by csgo, but warn anyway
             Platform::Print("RequestUserStats not handled for custom appid\n");
         }
@@ -1202,6 +1287,22 @@ private:
     uint64 m_steamId;
     LocalUserStats::Store m_store;
 };
+
+static std::string ResetLocalAchievementsViaRcon()
+{
+    // Never alter genuine Steam achievements when using the original AppID.
+    if (AppId::IsOriginal())
+    {
+        return "ERR reset_achievements requires custom appid";
+    }
+
+    std::lock_guard lock{ s_localStatsMutex };
+    if (!s_localStatsProxy)
+    {
+        return "ERR local user stats proxy unavailable";
+    }
+    return s_localStatsProxy->ResetAchievementsForRcon();
+}
 
 class SteamGameServerProxy final
 {
@@ -2083,9 +2184,12 @@ static void Hk_SteamAPI_RunCallbacks()
     std::vector<UserStatsReceived_t> receivedCallbacks;
     std::vector<UserStatsStored_t> storedCallbacks;
     std::vector<UserAchievementStored_t> achievementCallbacks;
-    receivedCallbacks.swap(s_userStatsReceivedCallbacks);
-    storedCallbacks.swap(s_userStatsStoredCallbacks);
-    achievementCallbacks.swap(s_userAchievementStoredCallbacks);
+    {
+        std::lock_guard lock{ s_localStatsMutex };
+        receivedCallbacks.swap(s_userStatsReceivedCallbacks);
+        storedCallbacks.swap(s_userStatsStoredCallbacks);
+        achievementCallbacks.swap(s_userAchievementStoredCallbacks);
+    }
 
     for (UserStatsReceived_t &data : receivedCallbacks)
     {

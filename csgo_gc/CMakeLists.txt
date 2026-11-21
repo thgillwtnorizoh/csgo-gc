@@ -38,6 +38,7 @@ add_library(csgo_gc SHARED
     item_utils.cpp
     keyvalue.cpp
     local_user_stats.cpp
+    achievement_log.cpp
     main.cpp
     music_kit.cpp
     networking_client.cpp
@@ -411,6 +412,34 @@ if (BUILD_TESTING)
     add_test(NAME saved_item_shuffles_tests COMMAND saved_item_shuffles_tests)
     set_tests_properties(saved_item_shuffles_tests PROPERTIES
         WORKING_DIRECTORY "${SAVED_ITEM_SHUFFLES_TEST_WORKING_DIRECTORY}")
+
+    # Does not depend on Steam, protobuf, or native hooks. Keep the bounded
+    # achievement event writer independently verifiable on each platform.
+    add_executable(achievement_log_tests
+        achievement_log.cpp
+        achievement_log_tests.cpp)
+    target_link_libraries(achievement_log_tests PRIVATE Threads::Threads)
+    # The standalone fixture uses std::filesystem for temporary test paths.
+    # Only the test binary needs macOS 10.15; the shipped GC remains 10.13.
+    if (APPLE)
+        # CMake Makefile builds inherit the global 10.13 minimum even if the
+        # target property is set. Explicit compiler/linker flags make this
+        # standalone std::filesystem test fixture use macOS 10.15; shipped GC
+        # retains the historical macOS 10.13 deployment target.
+        set_target_properties(achievement_log_tests PROPERTIES
+            MACOSX_DEPLOYMENT_TARGET "10.15")
+        target_compile_options(achievement_log_tests PRIVATE
+            "-mmacosx-version-min=10.15")
+        target_link_options(achievement_log_tests PRIVATE
+            "-mmacosx-version-min=10.15")
+    endif()
+    if (MSVC)
+        target_compile_options(achievement_log_tests PRIVATE /W4)
+        target_compile_definitions(achievement_log_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+    else()
+        target_compile_options(achievement_log_tests PRIVATE -Wall -Wextra)
+    endif()
+    add_test(NAME achievement_log_tests COMMAND achievement_log_tests)
 
     add_executable(local_user_stats_tests
         keyvalue.cpp
