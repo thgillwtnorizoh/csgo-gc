@@ -5043,6 +5043,30 @@ static bool GCMMClientLifecycle(bool expectedEnabled)
     return valid;
 }
 
+static bool RconAchievementResetRequiresExplicitConfirmation()
+{
+    ClientGC gc{ 76561197960265729ull };
+    int calls = 0;
+    const std::string usage = "ERR usage: reset_achievements confirm";
+    bool valid = gc.RunRconCommand("help").find("reset_achievements confirm") != std::string::npos
+        && gc.RunRconCommand("reset_achievements") == usage
+        && gc.RunRconCommand("reset_achievements yes") == usage
+        && gc.RunRconCommand("reset_achievements confirm extra") == usage
+        && gc.RunRconCommand("reset_achievements confirm") == "ERR local achievement stats unavailable";
+
+    gc.SetAchievementResetHandler([&] {
+        ++calls;
+        return "OK reset_achievements removed=2 stats=preserved";
+    });
+
+    valid &= gc.RunRconCommand("reset_achievements confirm") ==
+        "OK reset_achievements removed=2 stats=preserved";
+    valid &= calls == 1;
+    valid &= gc.RunRconCommand("reset_achievements CONFIRM") == usage;
+    valid &= calls == 1;
+    return valid;
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 2 && std::string_view{ argv[1] } == "--gcmm")
@@ -5071,6 +5095,7 @@ int main(int argc, char **argv)
 
     const TestCase tests[]{
         { "MalformedMessageLengthsAreRejected", MalformedMessageLengthsAreRejected },
+        { "RconAchievementResetRequiresExplicitConfirmation", RconAchievementResetRequiresExplicitConfirmation },
         { "InventoryInsertionsSurviveRehash", InventoryInsertionsSurviveRehash },
         { "JoinServerAddressHasNoTrailingWhitespace", JoinServerAddressHasNoTrailingWhitespace },
         { "SouvenirOpeningPublishesOnlyValidObjects", SouvenirOpeningPublishesOnlyValidObjects },

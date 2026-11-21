@@ -4,6 +4,8 @@
 #include "gc_shared.h"
 #include "inventory.h"
 
+#include <functional>
+
 class ClientGC final : public SharedGC
 {
 public:
@@ -17,6 +19,9 @@ public:
     // rather than cached, because a server can change its game mode mid-session.
     bool MusicKitStatTrakActive() const;
     std::string RunRconCommand(std::string command);
+    using AchievementResetHandler = std::function<std::string()>;
+    // Registered before the client GC is exposed to RCON.
+    void SetAchievementResetHandler(AchievementResetHandler handler);
     static std::string RconCommandUsageList();
 
 private:
@@ -64,6 +69,7 @@ private:
     std::string RconRemoveItem(const RconRequest &request);
     std::string RconRefreshInventory(const RconRequest &request);
     std::string RconSaveInventory(const RconRequest &request);
+    std::string RconResetAchievements(const RconRequest &request);
     // P0 matchmaking probe: inject GC->client matchmaking messages (mm_probe.h)
     std::string RconMatchmakingUpdate(const RconRequest &request);
     std::string RconMatchmakingReserve(const RconRequest &request);
@@ -159,6 +165,7 @@ private:
     CMsgGCCStrike15_v2_MatchmakingStart m_gcmmRequest;
     std::optional<CMsgGCCStrike15_v2_MatchmakingGC2ClientReserve> m_gcmmReservation;
 
+    AchievementResetHandler m_achievementResetHandler;
     Inventory m_inventory;
     std::unordered_set<uint64_t> m_gameServerEquippedItems;
     std::atomic<int32_t> m_localUserId{};
