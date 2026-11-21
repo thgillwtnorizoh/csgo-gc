@@ -182,6 +182,9 @@ public:
 // client connect/disconnect notifications
 static GCWrapper<ClientGC, NetworkingClient> *s_clientGC;
 static GCWrapper<ServerGC, NetworkingServer> *s_serverGC;
+// Construct before RCON so its destructor runs after RCON has stopped and
+// joined workers; late worker commands must never see a destroyed mutex.
+static std::mutex s_localStatsMutex;
 static RconServer s_rconServer;
 static std::string ResetLocalAchievementsViaRcon();
 
@@ -927,7 +930,6 @@ public:
 class SteamUserStatsProxy;
 // RCON uses a GC worker while Steam User Stats is called by game-facing threads.
 // Protect active local store, its proxy lifetime, and pending Steam callbacks.
-static std::mutex s_localStatsMutex;
 static SteamUserStatsProxy *s_localStatsProxy{};
 static std::vector<UserStatsReceived_t> s_userStatsReceivedCallbacks;
 static std::vector<UserStatsStored_t> s_userStatsStoredCallbacks;
