@@ -1,11 +1,12 @@
 #include "achievement_log.h"
 
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
-#include <filesystem>
 #include <string>
-#include <system_error>
+#include <sys/stat.h>
 #ifdef _WIN32
+#include <direct.h>
 #include <process.h>
 #else
 #include <unistd.h>
@@ -15,6 +16,58 @@ namespace AchievementLog
 {
 namespace
 {
+// The GC supports macOS 10.13. libc++ std::filesystem needs macOS 10.15,
+// so use the OS directory and stat functions already available on 10.13.
+bool EnsureParentDirectories(std::string_view path)
+{
+    const size_t lastSeparator = path.find_last_of("/\\");
+    if (lastSeparator == std::string_view::npos)
+        return true;
+
+    // Walk each path component to support both a relative GC directory and
+    // nested/absolute paths used by standalone test fixtures.
+    for (size_t end = 0; end <= lastSeparator; ++end)
+    {
+        if (end != lastSeparator && path[end] != '/' && path[end] != '\\')
+            continue;
+
+        const std::string directory{ path.substr(0, end) };
+        if (directory.empty() || directory == "." || directory == ".."
+            || directory.back() == ':')
+            continue;
+#ifdef _WIN32
+        const int result = _mkdir(directory.c_str());
+#else
+        const int result = mkdir(directory.c_str(), 0755);
+#endif
+        if (result != 0 && errno != EEXIST)
+            return false;
+    }
+    return true;
+}
+
+bool GetExistingSize(const std::string &path, uint64_t &size)
+{
+#ifdef _WIN32
+    struct _stat64 info{};
+    const int result = _stat64(path.c_str(), &info);
+#else
+    struct stat info{};
+    const int result = stat(path.c_str(), &info);
+#endif
+    if (result != 0)
+    {
+        if (errno != ENOENT)
+            return false;
+        size = 0;
+        return true;
+    }
+    if (info.st_size < 0)
+        return false;
+    size = static_cast<uint64_t>(info.st_size);
+    return true;
+}
+
 std::string MakeSessionId()
 {
     const auto wall = std::chrono::system_clock::now().time_since_epoch().count();
@@ -104,18 +157,11 @@ bool Writer::Append(std::string_view eventType, std::string_view fields)
     // If logging fails, NEVER interfere with CS:GO's SetAchievement /
     // IndicateAchievementProgress / StoreStats return values or callbacks.
     // Cap growth rather than silently rotating data RASC might not yet read.
-    std::error_code error;
-    const std::filesystem::path path{ m_path };
-    const auto parent = path.parent_path();
-    if (!parent.empty())
-    {
-        std::filesystem::create_directories(parent, error);
-        if (error) return false;
-    }
-    const bool exists = std::filesystem::exists(path, error);
-    if (error) return false;
-    const auto currentSize = exists ? std::filesystem::file_size(path, error) : 0;
-    if (error || line.size() > m_maxBytes ||
+    if (!EnsureParentDirectories(m_path) || line.size() > m_maxBytes)
+        return false;
+
+    uint64_t currentSize{};
+    if (!GetExistingSize(m_path, currentSize) ||
         currentSize > m_maxBytes - line.size())
         return false;
 
