@@ -1,6 +1,7 @@
 #include "achievement_log.h"
 
 #include <algorithm>
+#include <chrono>
 #include <atomic>
 #include <filesystem>
 #include <fstream>
