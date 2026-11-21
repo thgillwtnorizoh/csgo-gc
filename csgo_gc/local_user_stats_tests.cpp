@@ -172,6 +172,84 @@ bool ClearAndResetFollowSteamSemantics()
         && CHECK(storedAchievements.empty());
 }
 
+bool ResetOnlyAchievementsPersistsAndPreservesStats()
+{
+    ResetStorage();
+    LocalUserStats::Store stats{ TestPath };
+    if (!CHECK(stats.Load() == LocalUserStats::LoadResult::NotFound)
+        || !CHECK(stats.SetStat("TOTAL_KILLS", 1729))
+        || !CHECK(stats.SetStat("AVERAGE", 1.25f))
+        || !CHECK(stats.SetAchievement("ALREADY_SAVED", 100)))
+    {
+        return false;
+    }
+
+    std::vector<std::string> stored;
+    if (!CHECK(stats.Save(stored)) || !CHECK(stored.size() == 1)
+        || !CHECK(stats.SetAchievement("NOT_YET_SAVED", 200)))
+    {
+        return false;
+    }
+
+    size_t removedCount = 99;
+    if (!CHECK(stats.ResetAchievements(removedCount))
+        || !CHECK(removedCount == 2)
+        || !CHECK(stats.Save(stored))
+        || !CHECK(stored.empty()))
+    {
+        return false;
+    }
+
+    LocalUserStats::Store reloaded{ TestPath };
+    int32_t kills{};
+    float average{};
+    bool achieved = true;
+    uint32_t unlockTime = 999;
+    return CHECK(reloaded.Load() == LocalUserStats::LoadResult::Success)
+        && CHECK(reloaded.GetStat("TOTAL_KILLS", kills))
+        && CHECK(kills == 1729)
+        && CHECK(reloaded.GetStat("AVERAGE", average))
+        && CHECK(average == 1.25f)
+        && CHECK(reloaded.GetAchievement("ALREADY_SAVED", achieved, unlockTime))
+        && CHECK(!achieved && unlockTime == 0)
+        && CHECK(reloaded.GetAchievement("NOT_YET_SAVED", achieved, unlockTime))
+        && CHECK(!achieved && unlockTime == 0)
+        && CHECK(reloaded.ResetAchievements(removedCount))
+        && CHECK(removedCount == 0);
+}
+
+bool FailedAchievementResetRestoresMemoryAndPendingUnlocks()
+{
+    ResetStorage();
+    LocalUserStats::Store stats{ TestPath };
+    if (!CHECK(stats.Load() == LocalUserStats::LoadResult::NotFound)
+        || !CHECK(stats.SetStat("KEEP_ME", 7))
+        || !CHECK(stats.SetAchievement("PENDING", 321))
+        || !CHECK(TestFilesystem::MakeDirectory(TestDirectory))
+        || !CHECK(TestFilesystem::MakeDirectory(TestPath)))
+    {
+        return false;
+    }
+
+    size_t removedCount = 55;
+    bool achieved{};
+    uint32_t unlockTime{};
+    int32_t statValue{};
+    const bool failed = !stats.ResetAchievements(removedCount);
+    const bool retained = stats.GetAchievement("PENDING", achieved, unlockTime)
+        && achieved && unlockTime == 321
+        && stats.GetStat("KEEP_ME", statValue) && statValue == 7
+        && removedCount == 55;
+    const bool unblocked = TestFilesystem::RemoveDirectory(TestPath);
+    std::vector<std::string> stored;
+    return CHECK(failed)
+        && CHECK(retained)
+        && CHECK(unblocked)
+        && CHECK(stats.Save(stored))
+        && CHECK(stored.size() == 1)
+        && CHECK(stored[0] == "PENDING");
+}
+
 bool FailedSaveRetainsPendingAchievementCallbacks()
 {
     ResetStorage();
@@ -236,6 +314,8 @@ int main()
         && RoundTripsStatsAndAchievements()
         && EnforcesStatTypesAndValidNames()
         && ClearAndResetFollowSteamSemantics()
+        && ResetOnlyAchievementsPersistsAndPreservesStats()
+        && FailedAchievementResetRestoresMemoryAndPendingUnlocks()
         && FailedSaveRetainsPendingAchievementCallbacks()
         && MalformedFilesAreRejectedWithoutPartialState()
         && ProductionPathMatchesOtherLocalData();

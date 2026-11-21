@@ -316,6 +316,33 @@ bool Store::Save(std::vector<std::string> &storedAchievements)
     return true;
 }
 
+bool Store::ResetAchievements(size_t &removedCount)
+{
+    if (!m_loaded)
+    {
+        return false;
+    }
+
+    // Only achievement state changes. Preserve integer/float stats, including
+    // cumulative game progress, and discard pending unlock callbacks if saved.
+    auto previousAchievements = std::move(m_achievements);
+    auto previousPending = std::move(m_pendingAchievements);
+    m_achievements.clear();
+    m_pendingAchievements.clear();
+
+    std::vector<std::string> storedAchievements;
+    if (!Save(storedAchievements))
+    {
+        // Do not leave an in-memory reset applied when persistence failed.
+        m_achievements = std::move(previousAchievements);
+        m_pendingAchievements = std::move(previousPending);
+        return false;
+    }
+
+    removedCount = previousAchievements.size();
+    return true;
+}
+
 bool Store::ResetAllStats(bool achievementsToo)
 {
     if (!m_loaded)
