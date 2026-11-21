@@ -236,8 +236,10 @@ bool Store::GetAchievement(std::string_view name, bool &achieved, uint32_t &unlo
     return true;
 }
 
-bool Store::SetAchievement(std::string_view name, uint32_t unlockTime)
+bool Store::SetAchievement(std::string_view name, uint32_t unlockTime,
+                           bool *newlyUnlocked)
 {
+    if (newlyUnlocked) *newlyUnlocked = false;
     if (!m_loaded || !IsValidName(name))
     {
         return false;
@@ -247,6 +249,7 @@ bool Store::SetAchievement(std::string_view name, uint32_t unlockTime)
     if (m_achievements.emplace(ownedName, unlockTime).second)
     {
         m_pendingAchievements.emplace(std::move(ownedName));
+        if (newlyUnlocked) *newlyUnlocked = true;
     }
     return true;
 }
@@ -313,6 +316,33 @@ bool Store::Save(std::vector<std::string> &storedAchievements)
     storedAchievements.assign(m_pendingAchievements.begin(), m_pendingAchievements.end());
     std::sort(storedAchievements.begin(), storedAchievements.end());
     m_pendingAchievements.clear();
+    return true;
+}
+
+bool Store::ResetAchievements(size_t &removedCount)
+{
+    if (!m_loaded)
+    {
+        return false;
+    }
+
+    // Only achievement state changes. Preserve integer/float stats, including
+    // cumulative game progress, and discard pending unlock callbacks if saved.
+    auto previousAchievements = std::move(m_achievements);
+    auto previousPending = std::move(m_pendingAchievements);
+    m_achievements.clear();
+    m_pendingAchievements.clear();
+
+    std::vector<std::string> storedAchievements;
+    if (!Save(storedAchievements))
+    {
+        // Do not leave an in-memory reset applied when persistence failed.
+        m_achievements = std::move(previousAchievements);
+        m_pendingAchievements = std::move(previousPending);
+        return false;
+    }
+
+    removedCount = previousAchievements.size();
     return true;
 }
 

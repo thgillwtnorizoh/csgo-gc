@@ -82,6 +82,14 @@
 // 2 = log to in-game console and file (gc_log.txt)
 "log_output"	"1"
 
+// RASC live achievement observation (independent of gc_log.txt).
+// 0 = disabled (default). 1 = append source-confirmed unlocks, original
+// progress API calls, and StoreStats results to csgo_gc/achievement_log.
+// No stats/achievement persistence or Steam callback behavior is changed.
+// The diagnostic file is capped at 8 MiB; archive/remove it while the game
+// is stopped when full. Do not use as the sole durable unlock-state source.
+"achievement_log"	"0"
+
 // optionally load the item schema from another location
 // normally this should always be the path the game loads it from
 "item_schema_path"	"csgo/scripts/items/items_game.txt"

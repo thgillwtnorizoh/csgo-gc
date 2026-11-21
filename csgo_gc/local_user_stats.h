@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -34,10 +35,16 @@ public:
     bool SetStat(std::string_view name, float value);
 
     bool GetAchievement(std::string_view name, bool &achieved, uint32_t &unlockTime) const;
-    bool SetAchievement(std::string_view name, uint32_t unlockTime);
+    // Optional output distinguishes a NEW unlock from a repeat success.
+    // Steam's original boolean return contract remains unchanged.
+    bool SetAchievement(std::string_view name, uint32_t unlockTime,
+                        bool *newlyUnlocked = nullptr);
     bool ClearAchievement(std::string_view name);
 
     bool Save(std::vector<std::string> &storedAchievements);
+    // Reset only locally unlocked achievements, saving immediately. On save
+    // failure the in-memory achievement state and pending callbacks are restored.
+    bool ResetAchievements(size_t &removedCount);
     bool ResetAllStats(bool achievementsToo);
 
 private:

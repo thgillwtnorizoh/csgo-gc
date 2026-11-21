@@ -37,6 +37,8 @@ GCConfig::GCConfig()
     m_overwatchEnabled = config.GetNumber("overwatch_enabled", m_overwatchEnabled);
     m_allowUnsignedPanorama = config.GetNumber("allow_unsigned_panorama", m_allowUnsignedPanorama);
     m_mmProbe = config.GetNumber("mm_probe", m_mmProbe);
+    m_achievementLogEnabled = config.GetNumber(
+        "achievement_log", m_achievementLogEnabled);
 
     if (const KeyValue *gcmm = config.GetSubkey("gcmm"))
     {

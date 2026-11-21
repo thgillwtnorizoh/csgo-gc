@@ -1,0 +1,40 @@
+name: Achievement log fast checks
+
+on:
+  push:
+    branches: [ "feature/rasc-i01-achievement_log" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  journal-portability:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-24.04, windows-latest, macos-15 ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile and run standalone C++20 journal tests (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          c++ -std=c++20 -Wall -Wextra -Werror -pthread csgo_gc/achievement_log.cpp csgo_gc/achievement_log_tests.cpp -o achievement_log_tests
+          ./achievement_log_tests
+
+      - name: Enable MSVC build environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Compile and run standalone C++20 journal tests (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cl /nologo /std:c++20 /EHsc /W4 /WX /D_CRT_SECURE_NO_WARNINGS csgo_gc/achievement_log.cpp csgo_gc/achievement_log_tests.cpp /Fe:achievement_log_tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\achievement_log_tests.exe
+          exit $LASTEXITCODE
