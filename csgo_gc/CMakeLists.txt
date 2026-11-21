@@ -419,6 +419,12 @@ if (BUILD_TESTING)
         achievement_log.cpp
         achievement_log_tests.cpp)
     target_link_libraries(achievement_log_tests PRIVATE Threads::Threads)
+    # The standalone fixture uses std::filesystem for temporary test paths.
+    # Only the test binary needs macOS 10.15; the shipped GC remains 10.13.
+    if (APPLE)
+        set_target_properties(achievement_log_tests PROPERTIES
+            MACOSX_DEPLOYMENT_TARGET "10.15")
+    endif()
     if (MSVC)
         target_compile_options(achievement_log_tests PRIVATE /W4)
         target_compile_definitions(achievement_log_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
