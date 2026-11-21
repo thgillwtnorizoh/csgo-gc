@@ -34,7 +34,10 @@ public:
     bool SetStat(std::string_view name, float value);
 
     bool GetAchievement(std::string_view name, bool &achieved, uint32_t &unlockTime) const;
-    bool SetAchievement(std::string_view name, uint32_t unlockTime);
+    // Optional output distinguishes a NEW unlock from a repeat success.
+    // Steam's original boolean return contract remains unchanged.
+    bool SetAchievement(std::string_view name, uint32_t unlockTime,
+                        bool *newlyUnlocked = nullptr);
     bool ClearAchievement(std::string_view name);
 
     bool Save(std::vector<std::string> &storedAchievements);
