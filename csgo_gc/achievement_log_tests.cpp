@@ -96,7 +96,8 @@ bool UnwritableDestinationFailsClosed(const fs::path &folder)
         out << "sentinel";
     }
     AchievementLog::Writer writer{ (blocker / "achievement_log").string() };
-    return Check(!writer.Unlock("A", 1), "unwritable journal returns false");
+    return Check(!writer.BeginMatch(), "unwritable match journal start fails")
+        && Check(!writer.Unlock("A", 1), "unwritable journal refuses append");
 }
 
 bool ConcurrentAppendIsSerialized(const fs::path &folder)
