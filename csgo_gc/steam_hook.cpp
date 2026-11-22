@@ -1343,6 +1343,10 @@ public:
         // Activate the process-wide fence only after the persistent save
         // succeeded; failed resets leave normal behavior intact.
         s_resetLocalStatsUntilProcessRestart = true;
+        // Reset must also discard older custom-AppID callback notifications
+        // that were queued before the RCON reset but not yet dispatched.
+        s_userAchievementStoredCallbacks.clear();
+        s_userStatsStoredCallbacks.clear();
         QueueUserStatsStoredCallback(k_EResultOK);
         if (GetConfig().m_achievementLogEnabled
             && !AchievementLog::Get().ClearCurrentMatch())
