@@ -34,7 +34,8 @@ bool BasicEventFormatAndOrder(const fs::path &folder)
 {
     const fs::path path = folder / "journal";
     AchievementLog::Writer writer{ path.string() };
-    if (!Check(writer.Unlock("KILL_ENEMY_LOW", 1795260000), "initial unlock")
+    if (!Check(writer.BeginMatch(), "begin match")
+        || !Check(writer.Unlock("KILL_ENEMY_LOW", 1795260000), "initial unlock")
         || !Check(writer.Progress("KILL_ENEMY_HIGH", 25, 100), "native progress")
         || !Check(writer.StoreResult(true, 1), "stored marker")
         || !Check(writer.StoreResult(false, 0), "failed store marker")
@@ -79,7 +80,8 @@ bool BoundedAndFailedWritesDoNotThrow(const fs::path &folder)
 {
     const fs::path path = folder / "bounded";
     AchievementLog::Writer writer{ path.string(), 220 };
-    if (!Check(writer.Unlock("TEST", 1), "bounded initial record")) return false;
+    if (!Check(writer.BeginMatch(), "bounded begin")
+        || !Check(writer.Unlock("TEST", 1), "bounded initial record")) return false;
     const auto previous = fs::file_size(path);
     return Check(!writer.Unlock("TEST2", 2), "bound rejects overflow")
         && Check(fs::file_size(path) == previous, "bounded file unchanged")
@@ -101,6 +103,7 @@ bool ConcurrentAppendIsSerialized(const fs::path &folder)
 {
     const fs::path path = folder / "concurrent";
     AchievementLog::Writer writer{ path.string() };
+    if (!Check(writer.BeginMatch(), "concurrent begin")) return false;
     std::atomic<bool> ok{ true };
     std::vector<std::thread> threads;
     for (int i = 0; i < 4; ++i)
@@ -125,6 +128,30 @@ bool ConcurrentAppendIsSerialized(const fs::path &folder)
             return false;
     return true;
 }
+
+bool MatchLifecycleTruncatesAndSuppressesLateWrites(const fs::path &folder)
+{
+    const auto path = folder / "lifecycle" / "achievement_log";
+    AchievementLog::Writer writer{ path.string() };
+    if (!Check(!fs::exists(path), "absent before join")
+        || !Check(!writer.Unlock("PREMATCH", 1), "no pre-match log")
+        || !Check(writer.BeginMatch(), "join creates journal")
+        || !Check(fs::exists(path) && fs::file_size(path) == 0, "empty log on join")
+        || !Check(writer.BeginMatch(), "idempotent round start")
+        || !Check(writer.Unlock("A", 11), "first match award")
+        || !Check(writer.BeginMatch(), "next round does not truncate")
+        || !Check(ReadLines(path).size() == 1, "round retains award")
+        || !Check(writer.ClearCurrentMatch(), "reset truncates match history")
+        || !Check(fs::file_size(path) == 0, "reset cleared bytes")
+        || !Check(writer.Unlock("B", 12), "post-reset unlock")
+        || !Check(writer.EndMatch(), "match end")
+        || !Check(fs::file_size(path) == 0, "match end truncates bytes")
+        || !Check(!writer.Unlock("POSTMATCH", 13), "no writes after match")) return false;
+    return Check(writer.BeginMatch(), "next match begins")
+        && Check(fs::file_size(path) == 0, "next match starts empty")
+        && Check(writer.Unlock("C", 14), "next match award")
+        && Check(ReadLines(path).size() == 1, "only new match data");
+}
 } // namespace
 
 int main()
@@ -136,7 +163,8 @@ int main()
     const bool ok = BasicEventFormatAndOrder(folder)
         && BoundedAndFailedWritesDoNotThrow(folder)
         && UnwritableDestinationFailsClosed(folder)
-        && ConcurrentAppendIsSerialized(folder);
+        && ConcurrentAppendIsSerialized(folder)
+        && MatchLifecycleTruncatesAndSuppressesLateWrites(folder);
     std::error_code ignored;
     fs::remove_all(folder, ignored);
     if (ok) std::cout << "PASS achievement_log: format, ordering, progress, bounds, concurrent writes\n";

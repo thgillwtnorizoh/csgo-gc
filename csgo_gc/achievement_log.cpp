@@ -119,6 +119,36 @@ std::string Writer::Quote(std::string_view input)
     return result;
 }
 
+bool Writer::BeginMatch()
+{
+    std::lock_guard<std::mutex> lock{ m_mutex };
+    if (m_matchActive) return true;
+    if (!EnsureParentDirectories(m_path)) return false;
+    FILE *file = std::fopen(m_path.c_str(), "wb");
+    if (!file) return false;
+    if (std::fclose(file) != 0) return false;
+    m_matchActive = true;
+    return true;
+}
+
+bool Writer::EndMatch()
+{
+    std::lock_guard<std::mutex> lock{ m_mutex };
+    if (!m_matchActive) return true;
+    // Stop writes even if the file cannot be cleared; report failure upstream.
+    m_matchActive = false;
+    FILE *file = std::fopen(m_path.c_str(), "wb");
+    return file && std::fclose(file) == 0;
+}
+
+bool Writer::ClearCurrentMatch()
+{
+    std::lock_guard<std::mutex> lock{ m_mutex };
+    if (!m_matchActive) return true;
+    FILE *file = std::fopen(m_path.c_str(), "wb");
+    return file && std::fclose(file) == 0;
+}
+
 bool Writer::Unlock(std::string_view name, uint32_t unlockSeconds)
 {
     return Append("unlock", "\"id\":" + Quote(name) +
@@ -142,6 +172,7 @@ bool Writer::StoreResult(bool success, std::size_t newlyStored)
 bool Writer::Append(std::string_view eventType, std::string_view fields)
 {
     std::lock_guard<std::mutex> lock{ m_mutex };
+    if (!m_matchActive) return false;
 
     const auto now = std::chrono::system_clock::now().time_since_epoch();
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();

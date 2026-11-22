@@ -24,6 +24,11 @@ public:
     explicit Writer(std::string path = LocalPath,
                     std::size_t maxBytes = DefaultMaxBytes);
 
+    // Called only for the local player. Creating the file does not require an unlock.
+    // Repeated round starts are idempotent until the match finishes.
+    bool BeginMatch();
+    bool EndMatch(); // Truncate match journal at completion/disconnect.
+    bool ClearCurrentMatch(); // Reset removes past match unlock signals too.
     bool Unlock(std::string_view name, uint32_t unlockSeconds);
     bool Progress(std::string_view name, uint32_t current, uint32_t maximum);
     bool StoreResult(bool success, std::size_t newlyStored);
@@ -36,6 +41,7 @@ private:
     std::string m_session;
     std::size_t m_maxBytes;
     std::mutex m_mutex;
+    bool m_matchActive{};
     uint64_t m_nextSequence{ 1 };
 };
 
