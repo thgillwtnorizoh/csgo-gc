@@ -35,6 +35,7 @@ public:
 
 private:
     bool Append(std::string_view eventType, std::string_view fields);
+    bool AppendLocked(std::string_view eventType, std::string_view fields);
     static std::string Quote(std::string_view value);
 
     std::string m_path;

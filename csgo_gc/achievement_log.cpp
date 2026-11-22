@@ -128,7 +128,11 @@ bool Writer::BeginMatch()
     if (!file) return false;
     if (std::fclose(file) != 0) return false;
     m_matchActive = true;
-    return true;
+    // Explicit join marker gives read-only consumers a reliable trigger for
+    // a ONE-TIME achievements.txt baseline without polling it every second.
+    if (AppendLocked("match_start", "\"reason\":\"join\"")) return true;
+    m_matchActive = false;
+    return false;
 }
 
 bool Writer::EndMatch()
@@ -146,7 +150,9 @@ bool Writer::ClearCurrentMatch()
     std::lock_guard<std::mutex> lock{ m_mutex };
     if (!m_matchActive) return true;
     FILE *file = std::fopen(m_path.c_str(), "wb");
-    return file && std::fclose(file) == 0;
+    if (!file || std::fclose(file) != 0) return false;
+    // The reset is a new earned-state baseline within the same match.
+    return AppendLocked("match_start", "\"reason\":\"reset\"");
 }
 
 bool Writer::Unlock(std::string_view name, uint32_t unlockSeconds)
@@ -173,7 +179,13 @@ bool Writer::Append(std::string_view eventType, std::string_view fields)
 {
     std::lock_guard<std::mutex> lock{ m_mutex };
     if (!m_matchActive) return false;
+    return AppendLocked(eventType, fields);
+}
 
+// Caller owns m_mutex. Both the join marker and regular API events use the
+// same sequence generator and atomic line-format rules.
+bool Writer::AppendLocked(std::string_view eventType, std::string_view fields)
+{
     const auto now = std::chrono::system_clock::now().time_since_epoch();
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
     const auto steady = std::chrono::steady_clock::now().time_since_epoch();

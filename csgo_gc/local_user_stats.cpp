@@ -210,7 +210,7 @@ bool Store::SetStat(std::string_view name, int32_t value)
     {
         return false;
     }
-    m_integerStats[std::string{ name }] = value;
+    if (!m_resetWriteFence) m_integerStats[std::string{ name }] = value;
     return true;
 }
 
@@ -220,7 +220,7 @@ bool Store::SetStat(std::string_view name, float value)
     {
         return false;
     }
-    m_floatStats[std::string{ name }] = value;
+    if (!m_resetWriteFence) m_floatStats[std::string{ name }] = value;
     return true;
 }
 
@@ -245,6 +245,7 @@ bool Store::SetAchievement(std::string_view name, uint32_t unlockTime,
         return false;
     }
 
+    if (m_resetWriteFence) return true;
     std::string ownedName{ name };
     if (m_achievements.emplace(ownedName, unlockTime).second)
     {
@@ -349,6 +350,7 @@ bool Store::ResetAchievements(size_t &removedCount)
     }
 
     removedCount = previousAchievements.size();
+    m_resetWriteFence = true;
     return true;
 }
 

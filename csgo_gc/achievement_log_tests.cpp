@@ -43,7 +43,7 @@ bool BasicEventFormatAndOrder(const fs::path &folder)
         return false;
 
     const auto lines = ReadLines(path);
-    if (!Check(lines.size() == 5, "five complete records")) return false;
+    if (!Check(lines.size() == 6, "match marker plus five complete records")) return false;
     const auto firstSessionPos = lines[0].find("\"session\":");
     if (!Check(firstSessionPos != std::string::npos, "session present")) return false;
     for (std::size_t i = 0; i < lines.size(); ++i)
@@ -60,32 +60,34 @@ bool BasicEventFormatAndOrder(const fs::path &folder)
             || !Check(!lines[i].empty() && lines[i].back() == '}', "complete JSON object"))
             return false;
     }
-    return Check(lines[0].find("\"type\":\"unlock\"") != std::string::npos,
+    return Check(lines[0].find("\"type\":\"match_start\"") != std::string::npos,
+            "explicit match start")
+        && Check(lines[1].find("\"type\":\"unlock\"") != std::string::npos,
             "first unlock")
-        && Check(lines[1].find("\"type\":\"progress_call\"") != std::string::npos,
+        && Check(lines[2].find("\"type\":\"progress_call\"") != std::string::npos,
             "real progress API event")
-        && Check(lines[1].find("\"current\":25,\"maximum\":100") != std::string::npos,
+        && Check(lines[2].find("\"current\":25,\"maximum\":100") != std::string::npos,
             "progress counts preserved")
-        && Check(lines[2].find("\"success\":true,\"newly_stored\":1") != std::string::npos,
+        && Check(lines[3].find("\"success\":true,\"newly_stored\":1") != std::string::npos,
             "successful StoreStats marker")
-        && Check(lines[3].find("\"success\":false,\"newly_stored\":0") != std::string::npos,
+        && Check(lines[4].find("\"success\":false,\"newly_stored\":0") != std::string::npos,
             "failed StoreStats marker")
-        && Check(lines[4].find("ESCAPE\\\\\\\"\\nID") == std::string::npos,
+        && Check(lines[5].find("ESCAPE\\\\\\\"\\nID") == std::string::npos,
             "literal control characters are not written unescaped")
-        && Check(lines[4].find("\\u000aID") != std::string::npos,
+        && Check(lines[5].find("\\u000aID") != std::string::npos,
             "newline escaped as JSON unicode");
 }
 
 bool BoundedAndFailedWritesDoNotThrow(const fs::path &folder)
 {
     const fs::path path = folder / "bounded";
-    AchievementLog::Writer writer{ path.string(), 220 };
+    AchievementLog::Writer writer{ path.string(), 410 };
     if (!Check(writer.BeginMatch(), "bounded begin")
         || !Check(writer.Unlock("TEST", 1), "bounded initial record")) return false;
     const auto previous = fs::file_size(path);
     return Check(!writer.Unlock("TEST2", 2), "bound rejects overflow")
         && Check(fs::file_size(path) == previous, "bounded file unchanged")
-        && Check(ReadLines(path).size() == 1, "no partial overflow record");
+        && Check(ReadLines(path).size() == 2, "no partial overflow record");
 }
 
 bool UnwritableDestinationFailsClosed(const fs::path &folder)
@@ -120,7 +122,7 @@ bool ConcurrentAppendIsSerialized(const fs::path &folder)
     for (auto &thread : threads) thread.join();
     const auto lines = ReadLines(path);
     if (!Check(ok.load(), "all concurrent events written")
-        || !Check(lines.size() == 100, "exactly 100 full records"))
+        || !Check(lines.size() == 101, "marker and exactly 100 full records"))
         return false;
     for (std::size_t i = 0; i < lines.size(); ++i)
         if (!Check(lines[i].find(
@@ -137,21 +139,23 @@ bool MatchLifecycleTruncatesAndSuppressesLateWrites(const fs::path &folder)
     if (!Check(!fs::exists(path), "absent before join")
         || !Check(!writer.Unlock("PREMATCH", 1), "no pre-match log")
         || !Check(writer.BeginMatch(), "join creates journal")
-        || !Check(fs::exists(path) && fs::file_size(path) == 0, "empty log on join")
+        || !Check(fs::exists(path) && ReadLines(path).size() == 1, "join-only marker")
         || !Check(writer.BeginMatch(), "idempotent round start")
         || !Check(writer.Unlock("A", 11), "first match award")
         || !Check(writer.BeginMatch(), "next round does not truncate")
-        || !Check(ReadLines(path).size() == 1, "round retains award")
+        || !Check(ReadLines(path).size() == 2, "round retains marker plus award")
         || !Check(writer.ClearCurrentMatch(), "reset truncates match history")
-        || !Check(fs::file_size(path) == 0, "reset cleared bytes")
+        || !Check(ReadLines(path).size() == 1 &&
+                 ReadLines(path)[0].find("\"reason\":\"reset\"") != std::string::npos,
+                 "reset replaced old events with fresh baseline marker")
         || !Check(writer.Unlock("B", 12), "post-reset unlock")
         || !Check(writer.EndMatch(), "match end")
         || !Check(fs::file_size(path) == 0, "match end truncates bytes")
         || !Check(!writer.Unlock("POSTMATCH", 13), "no writes after match")) return false;
     return Check(writer.BeginMatch(), "next match begins")
-        && Check(fs::file_size(path) == 0, "next match starts empty")
+        && Check(ReadLines(path).size() == 1, "next match starts with a marker")
         && Check(writer.Unlock("C", 14), "next match award")
-        && Check(ReadLines(path).size() == 1, "only new match data");
+        && Check(ReadLines(path).size() == 2, "next match marker and new award only");
 }
 } // namespace
 

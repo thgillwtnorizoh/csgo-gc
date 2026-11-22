@@ -45,6 +45,9 @@ public:
     // Reset achievements and all local integer/float progress, saving immediately.
     // Save failure restores all memory and pending unlock callbacks.
     bool ResetAchievements(size_t &removedCount);
+    // A successful hard reset must not be undone by cached in-game stat
+    // updates. Writes resume only in a fresh GC/game process.
+    bool WritesBlockedUntilRestart() const { return m_resetWriteFence; }
     bool ResetAllStats(bool achievementsToo);
 
 private:
@@ -52,6 +55,7 @@ private:
 
     std::string m_path;
     bool m_loaded{};
+    bool m_resetWriteFence{};
     std::unordered_map<std::string, int32_t> m_integerStats;
     std::unordered_map<std::string, float> m_floatStats;
     std::unordered_map<std::string, uint32_t> m_achievements;
