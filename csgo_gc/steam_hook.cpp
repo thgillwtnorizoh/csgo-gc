@@ -186,6 +186,9 @@ static GCWrapper<ServerGC, NetworkingServer> *s_serverGC;
 // Construct before RCON so its destructor runs after RCON has stopped and
 // joined workers; late worker commands must never see a destroyed mutex.
 static std::mutex s_localStatsMutex;
+// A new SteamUserStatsProxy may be constructed while this client is running.
+// The explicit hard-reset fence is process-global and dies on game restart.
+static bool s_resetLocalStatsUntilProcessRestart = false;
 static RconServer s_rconServer;
 static std::string ResetLocalAchievementsViaRcon();
 
@@ -1140,7 +1143,13 @@ public:
         if (!AppId::IsOriginal())
         {
             std::lock_guard lock{ s_localStatsMutex };
-            return name && m_store.SetStat(name, value);
+            if (!name) return false;
+            if (s_resetLocalStatsUntilProcessRestart)
+            {
+                int32 ignored{};
+                return m_store.GetStat(name, ignored);
+            }
+            return m_store.SetStat(name, value);
         }
         return original(name, value);
     }
@@ -1150,7 +1159,13 @@ public:
         if (!AppId::IsOriginal())
         {
             std::lock_guard lock{ s_localStatsMutex };
-            return name && m_store.SetStat(name, value);
+            if (!name) return false;
+            if (s_resetLocalStatsUntilProcessRestart)
+            {
+                float ignored{};
+                return m_store.GetStat(name, ignored);
+            }
+            return m_store.SetStat(name, value);
         }
         return original(name, value);
     }
@@ -1190,6 +1205,14 @@ public:
                 ? static_cast<uint32>(currentTime)
                 : 0;
             bool newlyUnlocked = false;
+            // A game can retain grind counters in its own process after
+            // ResetAchievements. Never re-award or re-log from that stale cache.
+            if (s_resetLocalStatsUntilProcessRestart)
+            {
+                bool achieved{};
+                uint32 ignored{};
+                return name && m_store.GetAchievement(name, achieved, ignored);
+            }
             const bool result = name && m_store.SetAchievement(
                 name, unlockTime, &newlyUnlocked);
             if (result && newlyUnlocked && GetConfig().m_achievementLogEnabled)
@@ -1258,6 +1281,9 @@ public:
             {
                 return false;
             }
+            if (s_resetLocalStatsUntilProcessRestart
+                || m_store.WritesBlockedUntilRestart())
+                return true; // no progress callback or journal entry during fence
             QueueUserAchievementStoredCallback(name, currentProgress, maxProgress);
             // Observe genuine game-provided progress. Never infer progress from
             // stats or synthesize an extra Steam callback.
@@ -1314,13 +1340,16 @@ public:
             return "ERR reset_achievements save failed";
         }
 
+        // Activate the process-wide fence only after the persistent save
+        // succeeded; failed resets leave normal behavior intact.
+        s_resetLocalStatsUntilProcessRestart = true;
         QueueUserStatsStoredCallback(k_EResultOK);
         if (GetConfig().m_achievementLogEnabled
             && !AchievementLog::Get().ClearCurrentMatch())
             Platform::Print("RCON: reset saved but journal truncation failed\\n");
         Platform::Print("RCON: reset %zu local achievements and all numeric stats\n", removed);
         return "OK reset_achievements removed=" + std::to_string(removed)
-            + " stats=cleared";
+            + " stats=cleared writes=blocked_until_restart";
     }
 
     SteamAPICall_t RequestUserStats(auto original, CSteamID steamIDUser)

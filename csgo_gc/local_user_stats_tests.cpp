@@ -206,6 +206,7 @@ bool ResetAchievementsAlsoClearsStatsPermanently()
     bool achieved = true;
     uint32_t unlockTime = 999;
     return CHECK(reloaded.Load() == LocalUserStats::LoadResult::Success)
+        && CHECK(!reloaded.WritesBlockedUntilRestart())
         && CHECK(reloaded.GetStat("TOTAL_KILLS", kills))
         && CHECK(kills == 0)
         && CHECK(reloaded.GetStat("AVERAGE", average))
@@ -215,7 +216,43 @@ bool ResetAchievementsAlsoClearsStatsPermanently()
         && CHECK(reloaded.GetAchievement("NOT_YET_SAVED", achieved, unlockTime))
         && CHECK(!achieved && unlockTime == 0)
         && CHECK(reloaded.ResetAchievements(removedCount))
-        && CHECK(removedCount == 0);
+        && CHECK(removedCount == 0)
+        && CHECK(reloaded.WritesBlockedUntilRestart());
+}
+
+bool SuccessfulResetBlocksStaleStatAndAchievementWritesUntilNewStore()
+{
+    ResetStorage();
+    LocalUserStats::Store game{ TestPath };
+    if (!CHECK(game.Load() == LocalUserStats::LoadResult::NotFound)
+        || !CHECK(game.SetStat("TOTAL_KILLS", 10000))
+        || !CHECK(game.SetStat("RATIO", 11.5f))
+        || !CHECK(game.SetAchievement("BODY_BAGGER", 10)))
+        return false;
+    size_t removed{};
+    if (!CHECK(game.ResetAchievements(removed)) || !CHECK(removed == 1)
+        || !CHECK(game.WritesBlockedUntilRestart())
+        || !CHECK(game.SetStat("TOTAL_KILLS", 10000)) // cached game value rejected
+        || !CHECK(game.SetStat("RATIO", 11.5f))
+        || !CHECK(game.SetAchievement("BODY_BAGGER", 11)))
+        return false;
+    int32_t kills{ 5 };
+    float ratio{ 5 };
+    bool awarded{ true };
+    uint32_t time{ 123 };
+    std::vector<std::string> stored;
+    if (!CHECK(game.GetStat("TOTAL_KILLS", kills) && kills == 0)
+        || !CHECK(game.GetStat("RATIO", ratio) && ratio == 0.0f)
+        || !CHECK(game.GetAchievement("BODY_BAGGER", awarded, time))
+        || !CHECK(!awarded && time == 0)
+        || !CHECK(game.Save(stored) && stored.empty()))
+        return false;
+    // Only a fresh process/store recovers the ability to earn progress.
+    LocalUserStats::Store restarted{ TestPath };
+    return CHECK(restarted.Load() == LocalUserStats::LoadResult::Success)
+        && CHECK(!restarted.WritesBlockedUntilRestart())
+        && CHECK(restarted.SetStat("TOTAL_KILLS", 1))
+        && CHECK(restarted.SetAchievement("REAL_NEW_AWARD", 14));
 }
 
 bool FailedAchievementResetRestoresMemoryAndPendingUnlocks()
@@ -355,6 +392,7 @@ int main()
         && EnforcesStatTypesAndValidNames()
         && ClearAndResetFollowSteamSemantics()
         && ResetAchievementsAlsoClearsStatsPermanently()
+        && SuccessfulResetBlocksStaleStatAndAchievementWritesUntilNewStore()
         && FailedAchievementResetRestoresMemoryAndPendingUnlocks()
         && FailedSaveRetainsPendingAchievementCallbacks()
         && FreshUnlockFlagPreservesStoreStatsSemantics()
