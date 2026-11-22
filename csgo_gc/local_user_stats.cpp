@@ -326,10 +326,14 @@ bool Store::ResetAchievements(size_t &removedCount)
         return false;
     }
 
-    // Only achievement state changes. Preserve integer/float stats, including
-    // cumulative game progress, and discard pending unlock callbacks if saved.
+    // Reset both achievements AND numeric progress to avoid stat-triggered
+    // re-awards from the persisted GC store. Roll back everything on I/O error.
+    auto previousIntegers = std::move(m_integerStats);
+    auto previousFloats = std::move(m_floatStats);
     auto previousAchievements = std::move(m_achievements);
     auto previousPending = std::move(m_pendingAchievements);
+    m_integerStats.clear();
+    m_floatStats.clear();
     m_achievements.clear();
     m_pendingAchievements.clear();
 
@@ -337,6 +341,8 @@ bool Store::ResetAchievements(size_t &removedCount)
     if (!Save(storedAchievements))
     {
         // Do not leave an in-memory reset applied when persistence failed.
+        m_integerStats = std::move(previousIntegers);
+        m_floatStats = std::move(previousFloats);
         m_achievements = std::move(previousAchievements);
         m_pendingAchievements = std::move(previousPending);
         return false;

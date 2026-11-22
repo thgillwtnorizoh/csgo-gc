@@ -172,7 +172,7 @@ bool ClearAndResetFollowSteamSemantics()
         && CHECK(storedAchievements.empty());
 }
 
-bool ResetOnlyAchievementsPersistsAndPreservesStats()
+bool ResetAchievementsAlsoClearsStatsPermanently()
 {
     ResetStorage();
     LocalUserStats::Store stats{ TestPath };
@@ -201,15 +201,15 @@ bool ResetOnlyAchievementsPersistsAndPreservesStats()
     }
 
     LocalUserStats::Store reloaded{ TestPath };
-    int32_t kills{};
-    float average{};
+    int32_t kills{999};
+    float average{999.0f};
     bool achieved = true;
     uint32_t unlockTime = 999;
     return CHECK(reloaded.Load() == LocalUserStats::LoadResult::Success)
         && CHECK(reloaded.GetStat("TOTAL_KILLS", kills))
-        && CHECK(kills == 1729)
+        && CHECK(kills == 0)
         && CHECK(reloaded.GetStat("AVERAGE", average))
-        && CHECK(average == 1.25f)
+        && CHECK(average == 0.0f)
         && CHECK(reloaded.GetAchievement("ALREADY_SAVED", achieved, unlockTime))
         && CHECK(!achieved && unlockTime == 0)
         && CHECK(reloaded.GetAchievement("NOT_YET_SAVED", achieved, unlockTime))
@@ -354,7 +354,7 @@ int main()
         && RoundTripsStatsAndAchievements()
         && EnforcesStatTypesAndValidNames()
         && ClearAndResetFollowSteamSemantics()
-        && ResetOnlyAchievementsPersistsAndPreservesStats()
+        && ResetAchievementsAlsoClearsStatsPermanently()
         && FailedAchievementResetRestoresMemoryAndPendingUnlocks()
         && FailedSaveRetainsPendingAchievementCallbacks()
         && FreshUnlockFlagPreservesStoreStatsSemantics()

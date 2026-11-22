@@ -294,6 +294,31 @@ public:
         }
 
         const char *eventName = event->GetName();
+        if (GetConfig().m_achievementLogEnabled && !AppId::IsOriginal())
+        {
+            if (!strcmp(eventName, "cs_win_panel_match")
+                || !strcmp(eventName, "cs_match_end_restart")
+                || !strcmp(eventName, "cs_game_disconnected"))
+            {
+                if (!AchievementLog::Get().EndMatch())
+                    Platform::Print("Achievement journal: failed to clear at match end\\n");
+                return;
+            }
+            if (!strcmp(eventName, "player_connect_full"))
+            {
+                const int localPlayer = s_engineClient->GetLocalPlayer();
+                PlayerInfo playerInfo{};
+                if (localPlayer > 0
+                    && s_engineClient->GetPlayerInfo(localPlayer, &playerInfo)
+                    && playerInfo.userId > 0
+                    && event->GetInt("userid") == playerInfo.userId
+                    && !AchievementLog::Get().BeginMatch())
+                {
+                    Platform::Print("Achievement journal: failed to start on join\\n");
+                }
+                return;
+            }
+        }
         if (!strcmp(eventName, "round_start"))
         {
             int localPlayer = s_engineClient->GetLocalPlayer();
@@ -308,6 +333,10 @@ public:
                 return;
             }
 
+            // Fallback for joins where player_connect_full preceded listener setup.
+            if (GetConfig().m_achievementLogEnabled && !AppId::IsOriginal()
+                && !AchievementLog::Get().BeginMatch())
+                Platform::Print("Achievement journal: failed to start on round_start\\n");
             Platform::Print("Listener syncing local music kit state on round_start: userid=%d\n", playerInfo.userId);
             s_clientGC->m_gc.PostToGC(GCEvent::SyncLocalPlayerMusicKitState,
                 0,
@@ -414,6 +443,10 @@ static ServerRoundMVPEventListener s_serverRoundMVPEventListener;
 static std::mutex s_gameEventListenerMutex;
 static bool s_clientRoundMVPListenerRegistered = false;
 static bool s_clientRoundStartListenerRegistered = false;
+static bool s_clientJoinListenerRegistered = false;
+static bool s_clientEndListenerRegistered = false;
+static bool s_clientRestartListenerRegistered = false;
+static bool s_clientDisconnectListenerRegistered = false;
 static bool s_serverRoundMVPListenerRegistered = false;
 
 static void InitializeClientGameInterfaces()
@@ -473,8 +506,20 @@ static void UpdateClientGameEventListeners()
                 Platform::Print("Failed to register round_start listener\n");
             }
         }
+        auto registerMatchEvent = [&](const char *eventName, bool &registered)
+        {
+            if (!registered && s_gameEventManager->AddListener(
+                &s_clientGameEventListener, eventName, false))
+                registered = true;
+        };
+        registerMatchEvent("player_connect_full", s_clientJoinListenerRegistered);
+        registerMatchEvent("cs_win_panel_match", s_clientEndListenerRegistered);
+        registerMatchEvent("cs_match_end_restart", s_clientRestartListenerRegistered);
+        registerMatchEvent("cs_game_disconnected", s_clientDisconnectListenerRegistered);
     }
-    else if (s_clientRoundMVPListenerRegistered || s_clientRoundStartListenerRegistered)
+    else if (s_clientRoundMVPListenerRegistered || s_clientRoundStartListenerRegistered
+        || s_clientJoinListenerRegistered || s_clientEndListenerRegistered
+        || s_clientRestartListenerRegistered || s_clientDisconnectListenerRegistered)
     {
         s_gameEventManager->RemoveListener(&s_clientGameEventListener);
         if (s_clientRoundMVPListenerRegistered)
@@ -487,6 +532,10 @@ static void UpdateClientGameEventListeners()
         }
         s_clientRoundMVPListenerRegistered = false;
         s_clientRoundStartListenerRegistered = false;
+        s_clientJoinListenerRegistered = false;
+        s_clientEndListenerRegistered = false;
+        s_clientRestartListenerRegistered = false;
+        s_clientDisconnectListenerRegistered = false;
     }
 }
 
@@ -1266,9 +1315,12 @@ public:
         }
 
         QueueUserStatsStoredCallback(k_EResultOK);
-        Platform::Print("RCON: reset %zu local achievements; stats preserved\n", removed);
+        if (GetConfig().m_achievementLogEnabled
+            && !AchievementLog::Get().ClearCurrentMatch())
+            Platform::Print("RCON: reset saved but journal truncation failed\\n");
+        Platform::Print("RCON: reset %zu local achievements and all numeric stats\n", removed);
         return "OK reset_achievements removed=" + std::to_string(removed)
-            + " stats=preserved";
+            + " stats=cleared";
     }
 
     SteamAPICall_t RequestUserStats(auto original, CSteamID steamIDUser)

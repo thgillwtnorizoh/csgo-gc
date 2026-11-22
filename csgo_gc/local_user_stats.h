@@ -42,8 +42,8 @@ public:
     bool ClearAchievement(std::string_view name);
 
     bool Save(std::vector<std::string> &storedAchievements);
-    // Reset only locally unlocked achievements, saving immediately. On save
-    // failure the in-memory achievement state and pending callbacks are restored.
+    // Reset achievements and all local integer/float progress, saving immediately.
+    // Save failure restores all memory and pending unlock callbacks.
     bool ResetAchievements(size_t &removedCount);
     bool ResetAllStats(bool achievementsToo);
 
