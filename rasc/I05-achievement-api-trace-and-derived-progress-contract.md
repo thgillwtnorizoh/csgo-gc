@@ -3,7 +3,10 @@
 **Project / Campaign / Actor / Assignment:** CS:GO Achievements Resurrection (RASC) + csgo-gc / GC-I05 / Work 2 Engineering / owner-authorized, opt-in diagnostic tracing before progress-popup implementation.
 
 **Starting main SHA:** `77b118bfbd18f83b4055e19fbe367f523dc7d893`.
-**Status:** ENGINEERING IMPLEMENTED; CI exact SHA and original runtime **NOT VERIFIED** at initial publication.
+**Status:** VERIFIED CHECKPOINT (exact-source cross-platform CI); original CS:GO runtime and independent Work 1 QA **NOT VERIFIED**; subsystem OPEN.
+**Exact tested production SHA:** `888ff10eb7b02c7fcd193c151addc84bb956c425`.
+**Published merge SHA:** `88800813f9afc4ec7779e4f591003f1a870135bc`.
+**Exact tested/merged source-tree SHA:** `a2eeed27b206940401aaeaa43529a25248630bd2` (identical).
 **Original runtime evidence:** Owner provided a match-scoped `achievement_log` with unlocks and stat stores but no `progress_call`, and an empty PowerShell-filtered capture. This absence **does not prove** CS:GO never calls the original Steam API: the previous journal records only validated local-proxy calls while a match is active, and is truncated at match end. Game may use `SetStat` and direct unlocks instead.
 
 ## New opt-in research trace — independently retained
@@ -45,8 +48,10 @@ Planned (not activated) contract:
 
 ## Tests / remaining gates
 
-C++ standalone journal writer test: persistent path retains records across match start/end/reset, all 3 API attempt classes, accepted vs blocked status, float infinity bit fidelity, multiple GC process sessions, source type; previous match-journal tests still run. Native Windows/macOS/Linux build and 32-bit CI, config parsing/compatibility, actual GC gameplay runtime and independent Work 1 QA are **NOT YET VERIFIED at publication**.
+C++ standalone journal writer test: persistent path retains records across match start/end/reset, all 3 API attempt classes, accepted vs blocked status, float infinity bit fidelity, multiple GC process sessions, source type; previous match-journal tests preserved.
+
+**Exact-source CI:** [Full Build Actions 45111842581](https://github.com/thgillwtnorizoh/csgo-gc/actions/runs/45111842581) **SUCCESS** at `888ff10eb7b02c7fcd193c151addc84bb956c425` — CTest **23/23 Windows, 23/23 macOS, 23/23 Linux, plus 1/1 Linux 32-bit**, **70/70 executions** with no failures. All three native platform builds and packaging succeeded. Artifacts: Windows `14790352028`, macOS `14790217634`, Linux `14789594498`. [Fast Achievement Log Checks 45111842588](https://github.com/thgillwtnorizoh/csgo-gc/actions/runs/45111842588) **SUCCESS**: Windows, macOS, Linux (3/3 additional standalone platform checks). No historical tests deleted. Tested tree identical to published main merge tree. No physical original game execution or independent Work 1 QA was performed.
 
 **Discrepancies:** No proof of original CS:GO `IndicateAchievementProgress` calls. Research trace is capped; if 8 MiB reached it refuses further appends; it is not a reliable high-volume lossless audit. Multithreaded same-process writes serialized; other processes or sudden power loss may still lose data. No host-thread/pipe IDs exposed to avoid privacy/fragility. Subsystem **OPEN**; no owner acceptance claimed.
 
-**Next task / actor:** Work 2 run exact-head CI and publish; Owner capture one full match trace; Work 1 independently correlate counter values with actual unlock and stat/goal mapping; Work 2 implement owner-authorized derived progress integration only after evidence gate.
+**Next bounded task / actor:** Owner capture `csgo_gc/achievement_api_trace.jsonl` during an actual local CS:GO match after enabling config and restarting; Work 1 independently identify/verify exact named stat→achievement ID and goal mappings and examine absence/presence of `progress_attempt`; Work 2 implements an explicitly owner-approved derived progress producer only after mapping evidence and acceptance thresholds. Live popup integration and physical runtime remain **OPEN / NOT VERIFIED**.
