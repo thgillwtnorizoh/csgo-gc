@@ -1,6 +1,7 @@
 #include "achievement_log.h"
 
 #include <cerrno>
+#include <bit>
 #include <chrono>
 #include <cstdio>
 #include <string>
@@ -85,9 +86,9 @@ std::string MakeSessionId()
 }
 } // namespace
 
-Writer::Writer(std::string path, std::size_t maxBytes)
+Writer::Writer(std::string path, std::size_t maxBytes, Retention retention)
     : m_path{ std::move(path) }, m_session{ MakeSessionId() },
-      m_maxBytes{ maxBytes }
+      m_maxBytes{ maxBytes }, m_retention{ retention }
 {
 }
 
@@ -122,6 +123,7 @@ std::string Writer::Quote(std::string_view input)
 bool Writer::BeginMatch()
 {
     std::lock_guard<std::mutex> lock{ m_mutex };
+    if (m_retention == Retention::Persistent) return true;
     if (m_matchActive) return true;
     if (!EnsureParentDirectories(m_path)) return false;
     FILE *file = std::fopen(m_path.c_str(), "wb");
@@ -138,6 +140,7 @@ bool Writer::BeginMatch()
 bool Writer::EndMatch()
 {
     std::lock_guard<std::mutex> lock{ m_mutex };
+    if (m_retention == Retention::Persistent) return true;
     if (!m_matchActive) return true;
     // Stop writes even if the file cannot be cleared; report failure upstream.
     m_matchActive = false;
@@ -148,6 +151,7 @@ bool Writer::EndMatch()
 bool Writer::ClearCurrentMatch()
 {
     std::lock_guard<std::mutex> lock{ m_mutex };
+    if (m_retention == Retention::Persistent) return true;
     if (!m_matchActive) return true;
     FILE *file = std::fopen(m_path.c_str(), "wb");
     if (!file || std::fclose(file) != 0) return false;
@@ -178,7 +182,7 @@ bool Writer::StoreResult(bool success, std::size_t newlyStored)
 bool Writer::Append(std::string_view eventType, std::string_view fields)
 {
     std::lock_guard<std::mutex> lock{ m_mutex };
-    if (!m_matchActive) return false;
+    if (m_retention == Retention::MatchScoped && !m_matchActive) return false;
     return AppendLocked(eventType, fields);
 }
 
@@ -218,9 +222,86 @@ bool Writer::AppendLocked(std::string_view eventType, std::string_view fields)
     return written && closed;
 }
 
+
+namespace
+{
+const char *JsonBool(bool value) { return value ? "true" : "false"; }
+}
+
+std::string Writer::BaseFields(std::string_view name, bool accepted, bool blocked)
+{
+    return "\"source\":\"observed_api\",\"id\":" + Quote(name)
+        + ",\"name_present\":" + JsonBool(!name.empty())
+        + ",\"accepted\":" + JsonBool(accepted)
+        + ",\"blocked_by_reset\":" + JsonBool(blocked);
+}
+
+bool Writer::TraceStart()
+{
+    return Append("trace_start", "\"source\":\"steam_api_proxy_custom_appid\"");
+}
+
+bool Writer::StatCall(std::string_view name, int32_t before, int32_t requested,
+                      int32_t after, bool beforeValid, bool afterValid,
+                      bool accepted, bool blocked)
+{
+    return Append("stat_call",
+        BaseFields(name, accepted, blocked) + ",\"stat_type\":\"int32\""
+        + ",\"before_valid\":" + JsonBool(beforeValid)
+        + ",\"before\":" + std::to_string(before)
+        + ",\"requested\":" + std::to_string(requested)
+        + ",\"after_valid\":" + JsonBool(afterValid)
+        + ",\"after\":" + std::to_string(after));
+}
+
+bool Writer::FloatStatCall(std::string_view name, float before, float requested,
+                           float after, bool beforeValid, bool afterValid,
+                           bool accepted, bool blocked)
+{
+    // Float bit patterns are exact even for NaN, infinity and -0.0, which
+    // cannot reliably be represented as unquoted JSON numeric tokens.
+    return Append("stat_call",
+        BaseFields(name, accepted, blocked) + ",\"stat_type\":\"float32\""
+        + ",\"before_valid\":" + JsonBool(beforeValid)
+        + ",\"before_bits\":" + std::to_string(std::bit_cast<uint32_t>(before))
+        + ",\"requested_bits\":" + std::to_string(std::bit_cast<uint32_t>(requested))
+        + ",\"after_valid\":" + JsonBool(afterValid)
+        + ",\"after_bits\":" + std::to_string(std::bit_cast<uint32_t>(after)));
+}
+
+bool Writer::AchievementCall(std::string_view name, bool beforeValid,
+                             bool beforeUnlocked, bool accepted,
+                             bool newlyUnlocked, bool blocked)
+{
+    return Append("achievement_call",
+        BaseFields(name, accepted, blocked)
+        + ",\"before_valid\":" + JsonBool(beforeValid)
+        + ",\"before_unlocked\":" + JsonBool(beforeUnlocked)
+        + ",\"newly_unlocked\":" + JsonBool(newlyUnlocked));
+}
+
+bool Writer::ProgressAttempt(std::string_view name, uint32_t current,
+                             uint32_t maximum, bool accepted,
+                             bool callbackQueued, bool blocked)
+{
+    return Append("progress_attempt",
+        BaseFields(name, accepted, blocked)
+        + ",\"current\":" + std::to_string(current)
+        + ",\"maximum\":" + std::to_string(maximum)
+        + ",\"callback_queued\":" + JsonBool(callbackQueued));
+}
+
 Writer &Get()
 {
     static Writer writer;
+    return writer;
+}
+
+Writer &GetApiTrace()
+{
+    static Writer writer{ ApiTracePath, DefaultMaxBytes, Retention::Persistent };
+    static const bool started = writer.TraceStart();
+    (void)started; // Failed trace IO must not alter game API behavior.
     return writer;
 }
 } // namespace AchievementLog

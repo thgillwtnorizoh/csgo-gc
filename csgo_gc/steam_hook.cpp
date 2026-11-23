@@ -1100,6 +1100,11 @@ public:
         {
             std::lock_guard lock{ s_localStatsMutex };
             Platform::Print("Handling RequestCurrentStats for custom appid\n");
+            // Start the standalone research trace even if gameplay never
+            // calls SetStat, SetAchievement or IndicateAchievementProgress.
+            // Only the custom-AppID local player's proxy is eligible.
+            if (GetConfig().m_achievementApiTraceEnabled && s_localStatsProxy == this)
+                (void)AchievementLog::GetApiTrace();
             LocalUserStats::LoadResult result = m_store.IsLoaded()
                 ? LocalUserStats::LoadResult::Success
                 : m_store.Load();
@@ -1143,13 +1148,31 @@ public:
         if (!AppId::IsOriginal())
         {
             std::lock_guard lock{ s_localStatsMutex };
-            if (!name) return false;
-            if (s_resetLocalStatsUntilProcessRestart)
+            const bool trace = GetConfig().m_achievementApiTraceEnabled
+                && s_localStatsProxy == this;
+            int32 before{}, after{};
+            const bool beforeValid = trace && name && m_store.GetStat(name, before);
+            const bool blocked = s_resetLocalStatsUntilProcessRestart
+                || m_store.WritesBlockedUntilRestart();
+            bool accepted = false;
+            if (name)
             {
-                int32 ignored{};
-                return m_store.GetStat(name, ignored);
+                if (s_resetLocalStatsUntilProcessRestart)
+                {
+                    int32 ignored{};
+                    accepted = m_store.GetStat(name, ignored);
+                }
+                else
+                    accepted = m_store.SetStat(name, value);
             }
-            return m_store.SetStat(name, value);
+            if (trace)
+            {
+                const bool afterValid = name && m_store.GetStat(name, after);
+                (void)AchievementLog::GetApiTrace().StatCall(
+                    name ? name : "", before, value, after,
+                    beforeValid, afterValid, accepted, blocked);
+            }
+            return accepted;
         }
         return original(name, value);
     }
@@ -1159,13 +1182,31 @@ public:
         if (!AppId::IsOriginal())
         {
             std::lock_guard lock{ s_localStatsMutex };
-            if (!name) return false;
-            if (s_resetLocalStatsUntilProcessRestart)
+            const bool trace = GetConfig().m_achievementApiTraceEnabled
+                && s_localStatsProxy == this;
+            float before{}, after{};
+            const bool beforeValid = trace && name && m_store.GetStat(name, before);
+            const bool blocked = s_resetLocalStatsUntilProcessRestart
+                || m_store.WritesBlockedUntilRestart();
+            bool accepted = false;
+            if (name)
             {
-                float ignored{};
-                return m_store.GetStat(name, ignored);
+                if (s_resetLocalStatsUntilProcessRestart)
+                {
+                    float ignored{};
+                    accepted = m_store.GetStat(name, ignored);
+                }
+                else
+                    accepted = m_store.SetStat(name, value);
             }
-            return m_store.SetStat(name, value);
+            if (trace)
+            {
+                const bool afterValid = name && m_store.GetStat(name, after);
+                (void)AchievementLog::GetApiTrace().FloatStatCall(
+                    name ? name : "", before, value, after,
+                    beforeValid, afterValid, accepted, blocked);
+            }
+            return accepted;
         }
         return original(name, value);
     }
@@ -1204,21 +1245,35 @@ public:
                 && static_cast<uint64_t>(currentTime) <= std::numeric_limits<uint32>::max()
                 ? static_cast<uint32>(currentTime)
                 : 0;
+            const bool trace = GetConfig().m_achievementApiTraceEnabled
+                && s_localStatsProxy == this;
+            bool beforeUnlocked{};
+            uint32 beforeTimestamp{};
+            const bool beforeValid = trace && name
+                && m_store.GetAchievement(name, beforeUnlocked, beforeTimestamp);
             bool newlyUnlocked = false;
+            const bool blocked = s_resetLocalStatsUntilProcessRestart
+                || m_store.WritesBlockedUntilRestart();
+            bool result{};
             // A game can retain grind counters in its own process after
             // ResetAchievements. Never re-award or re-log from that stale cache.
             if (s_resetLocalStatsUntilProcessRestart)
             {
                 bool achieved{};
                 uint32 ignored{};
-                return name && m_store.GetAchievement(name, achieved, ignored);
+                result = name && m_store.GetAchievement(name, achieved, ignored);
             }
-            const bool result = name && m_store.SetAchievement(
-                name, unlockTime, &newlyUnlocked);
-            if (result && newlyUnlocked && GetConfig().m_achievementLogEnabled)
+            else
+                result = name && m_store.SetAchievement(
+                    name, unlockTime, &newlyUnlocked);
+            if (trace)
             {
-                (void)AchievementLog::Get().Unlock(name, unlockTime);
+                (void)AchievementLog::GetApiTrace().AchievementCall(
+                    name ? name : "", beforeValid, beforeUnlocked,
+                    result, newlyUnlocked, blocked);
             }
+            if (result && newlyUnlocked && GetConfig().m_achievementLogEnabled)
+                (void)AchievementLog::Get().Unlock(name, unlockTime);
             return result;
         }
         return original(name);
@@ -1277,22 +1332,29 @@ public:
             std::lock_guard lock{ s_localStatsMutex };
             bool achieved{};
             uint32 unlockTime{};
-            if (!name || !m_store.GetAchievement(name, achieved, unlockTime))
+            const bool valid = name && m_store.GetAchievement(name, achieved, unlockTime);
+            const bool blocked = s_resetLocalStatsUntilProcessRestart
+                || m_store.WritesBlockedUntilRestart();
+            const bool callbackQueued = valid && !blocked;
+            if (callbackQueued)
             {
-                return false;
+                QueueUserAchievementStoredCallback(name, currentProgress, maxProgress);
+                // This journal event records an actual accepted game API call,
+                // NEVER a synthetic 25/50/75 percentage milestone.
+                if (GetConfig().m_achievementLogEnabled)
+                    (void)AchievementLog::Get().Progress(
+                        name, currentProgress, maxProgress);
             }
-            if (s_resetLocalStatsUntilProcessRestart
-                || m_store.WritesBlockedUntilRestart())
-                return true; // no progress callback or journal entry during fence
-            QueueUserAchievementStoredCallback(name, currentProgress, maxProgress);
-            // Observe genuine game-provided progress. Never infer progress from
-            // stats or synthesize an extra Steam callback.
-            if (GetConfig().m_achievementLogEnabled)
+            // The independent research trace records every custom-AppID local
+            // attempt, even if invalid or suppressed by the reset fence.
+            if (GetConfig().m_achievementApiTraceEnabled
+                && s_localStatsProxy == this)
             {
-                (void)AchievementLog::Get().Progress(
-                    name, currentProgress, maxProgress);
+                (void)AchievementLog::GetApiTrace().ProgressAttempt(
+                    name ? name : "", currentProgress, maxProgress,
+                    valid, callbackQueued, blocked);
             }
-            return true;
+            return valid;
         }
         return original(name, currentProgress, maxProgress);
     }

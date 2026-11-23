@@ -39,6 +39,8 @@ GCConfig::GCConfig()
     m_mmProbe = config.GetNumber("mm_probe", m_mmProbe);
     m_achievementLogEnabled = config.GetNumber(
         "achievement_log", m_achievementLogEnabled);
+    m_achievementApiTraceEnabled = config.GetNumber(
+        "achievement_api_trace", m_achievementApiTraceEnabled);
 
     if (const KeyValue *gcmm = config.GetSubkey("gcmm"))
     {
