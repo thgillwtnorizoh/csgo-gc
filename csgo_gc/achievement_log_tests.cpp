@@ -1,6 +1,8 @@
 #include "achievement_log.h"
 
 #include <algorithm>
+#include <bit>
+#include <limits>
 #include <chrono>
 #include <atomic>
 #include <filesystem>
@@ -132,6 +134,78 @@ bool ConcurrentAppendIsSerialized(const fs::path &folder)
     return true;
 }
 
+bool PersistentApiTraceCapturesCallsOutsideMatchAndRetainsOnEnd(const fs::path &folder)
+{
+    const auto path = folder / "trace" / "achievement_api_trace.jsonl";
+    using AchievementLog::Writer;
+    using AchievementLog::Retention;
+
+    Writer trace{ path.string(), AchievementLog::DefaultMaxBytes,
+                  Retention::Persistent };
+    if (!Check(trace.TraceStart(), "persistent trace starts without match")
+        || !Check(trace.StatCall("TOTAL_KILLS", 19, 20, 20,
+                true, true, true, false), "accepted stat write")
+        || !Check(trace.FloatStatCall("RATIO", 1.25f,
+                std::numeric_limits<float>::infinity(),
+                std::numeric_limits<float>::infinity(),
+                true, true, true, false), "exact float bits")
+        || !Check(trace.AchievementCall("BODY_BAGGER", true, false,
+                true, true, false), "new achievement call")
+        || !Check(trace.ProgressAttempt("KILL_ENEMY_HIGH", 25, 100,
+                false, false, false), "rejected progress observed")
+        || !Check(trace.ProgressAttempt("KILL_ENEMY_HIGH", 50, 100,
+                true, false, true), "reset-suppressed progress observed"))
+        return false;
+
+    const auto before = ReadLines(path);
+    if (!Check(before.size() == 6, "trace and five attempts present")
+        || !Check(before[0].find("\"type\":\"trace_start\"") != std::string::npos,
+                "explicit trace enabled proof")
+        || !Check(before[1].find("\"stat_type\":\"int32\"") != std::string::npos,
+                "integer stat typed")
+        || !Check(before[1].find("\"before\":19,\"requested\":20") != std::string::npos,
+                "original and requested counter recorded")
+        || !Check(before[1].find("\"accepted\":true,\"blocked_by_reset\":false")
+            != std::string::npos, "accepted vs blocked distinct")
+        || !Check(before[2].find("\"stat_type\":\"float32\"") != std::string::npos,
+                "float typed")
+        || !Check(before[2].find("\"requested_bits\":2139095040") != std::string::npos,
+                "infinity serialized as IEEE 754 bits not invalid JSON literal")
+        || !Check(before[3].find("\"type\":\"achievement_call\"") != std::string::npos,
+                "achievement API attempt recorded")
+        || !Check(before[3].find("\"newly_unlocked\":true") != std::string::npos,
+                "newly unlocked status recorded")
+        || !Check(before[4].find("\"type\":\"progress_attempt\"") != std::string::npos,
+                "rejected progress call captured")
+        || !Check(before[4].find("\"accepted\":false") != std::string::npos,
+                "rejection distinctly recorded")
+        || !Check(before[5].find("\"blocked_by_reset\":true") != std::string::npos,
+                "reset suppression distinctly recorded")
+        || !Check(before[5].find("\"callback_queued\":false") != std::string::npos,
+                "no Steam callback on suppressed call"))
+        return false;
+
+    if (!Check(trace.EndMatch(), "persistent trace ignores match end")
+        || !Check(trace.ClearCurrentMatch(), "persistent trace ignores reset")
+        || !Check(trace.BeginMatch(), "persistent trace ignores join")
+        || !Check(ReadLines(path) == before, "no truncated research evidence"))
+        return false;
+
+    // A later process reopens the same path with another session marker.
+    Writer restart{ path.string(), AchievementLog::DefaultMaxBytes,
+                    Retention::Persistent };
+    if (!Check(restart.TraceStart(), "new trace session persists")
+        || !Check(restart.StatCall("TOTAL_KILLS", 0, 1, 1,
+                true, true, true, false), "new process appends"))
+        return false;
+    const auto after = ReadLines(path);
+    return Check(after.size() == 8, "old trace retained across processes")
+        && Check(after[6].find("\"type\":\"trace_start\"") != std::string::npos,
+                 "new session marker appended")
+        && Check(after[7].find("\"requested\":1") != std::string::npos,
+                 "new session writes visible");
+}
+
 bool MatchLifecycleTruncatesAndSuppressesLateWrites(const fs::path &folder)
 {
     const auto path = folder / "lifecycle" / "achievement_log";
@@ -169,9 +243,10 @@ int main()
         && BoundedAndFailedWritesDoNotThrow(folder)
         && UnwritableDestinationFailsClosed(folder)
         && ConcurrentAppendIsSerialized(folder)
+        && PersistentApiTraceCapturesCallsOutsideMatchAndRetainsOnEnd(folder)
         && MatchLifecycleTruncatesAndSuppressesLateWrites(folder);
     std::error_code ignored;
     fs::remove_all(folder, ignored);
-    if (ok) std::cout << "PASS achievement_log: format, ordering, progress, bounds, concurrent writes\n";
+    if (ok) std::cout << "PASS achievement_log: format, ordering, progress, persistent API trace, bounds, concurrent writes\n";
     return ok ? 0 : 1;
 }

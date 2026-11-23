@@ -90,6 +90,16 @@
 // is stopped when full. Do not use as the sole durable unlock-state source.
 "achievement_log"	"0"
 
+// Optional RESEARCH ONLY: trace actual SteamUserStatsProxy SetStat,
+// SetAchievement and IndicateAchievementProgress calls even outside matches,
+// including rejected and post-reset blocked calls. This is INDEPENDENT of the
+// match-scoped achievement_log. Does not invent percentage milestones.
+// Output: csgo_gc/achievement_api_trace.jsonl (persistent across matches,
+// capped at 8 MiB; make a backup and remove while CS:GO is stopped if full).
+// High-frequency SetStat calls synchronously write on the game thread;
+// enable temporarily for characterization, then disable again.
+"achievement_api_trace"	"0"
+
 // optionally load the item schema from another location
 // normally this should always be the path the game loads it from
 "item_schema_path"	"csgo/scripts/items/items_game.txt"

@@ -51,6 +51,11 @@ public:
     // and achievements.txt, disabled unless explicitly opted in.
     bool m_achievementLogEnabled{ false };
 
+    // Extra research-only tracing of game API calls, including SetStat
+    // (int32/float), SetAchievement and IndicateAchievementProgress attempts.
+    // Writes a separate persistent file; defaults off to avoid hot-path I/O.
+    bool m_achievementApiTraceEnabled{ false };
+
     // GC Matchmaking Protocol native-control profile. Requires an external
     // coordinator through the separately configured Source RCON listener.
     bool m_gcmmEnabled{ false };
